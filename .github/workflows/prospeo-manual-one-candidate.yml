@@ -1,0 +1,84 @@
+name: Manual Prospeo one-candidate email lookup
+
+on:
+  workflow_dispatch:
+    inputs:
+      linkedin_url:
+        description: "Public LinkedIn profile URL; do not enter private personal information"
+        required: true
+        type: string
+      confirm_free_api_credit:
+        description: "I verified this account has at least one free Prospeo API credit, and disabled paid overages"
+        required: true
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: manual-prospeo-one-candidate
+  cancel-in-progress: false
+
+jobs:
+  lookup:
+    if: ${{ inputs.confirm_free_api_credit == true }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.11"
+      - name: Prepare private one-candidate input
+        env:
+          LINKEDIN_URL: ${{ inputs.linkedin_url }}
+        run: |
+          umask 077
+          mkdir -p private results .private
+          python - <<'PY'
+          import csv
+          import os
+          from urllib.parse import urlsplit
+          url = os.environ["LINKEDIN_URL"].strip()
+          parsed = urlsplit(url)
+          if parsed.scheme != "https" or parsed.netloc.lower() not in ("linkedin.com", "www.linkedin.com"):
+              raise SystemExit("Enter a valid https LinkedIn profile URL")
+          path = parsed.path.strip("/")
+          if not path.startswith("in/") or not path[3:] or "/" in path[3:]:
+              raise SystemExit("Enter a linkedin.com/in/... profile URL")
+          canonical = "https://www.linkedin.com/" + path
+          with open("private/one-candidate.csv", "w", newline="", encoding="utf-8") as stream:
+              writer = csv.DictWriter(stream, fieldnames=["linkedin_url"])
+              writer.writeheader()
+              writer.writerow({"linkedin_url": canonical})
+          PY
+      - name: Run one Prospeo email-only request
+        env:
+          PROSPEO_API_KEY: ${{ secrets.PROSPEO_API_KEY }}
+        run: |
+          if [ -z "${PROSPEO_API_KEY}" ]; then
+            echo "PROSPEO_API_KEY repository secret is missing"
+            exit 1
+          fi
+          umask 077
+          python enrich.py \
+            --input private/one-candidate.csv \
+            --output results/prospeo-one-candidate.csv \
+            --providers prospeo \
+            --live \
+            --max-calls 1 \
+            --max-http-requests 1 \
+            --max-credit-units 1 \
+            --credit-cycle 2026-10 \
+            --email-credits prospeo=100
+      - name: Upload private results for repository owner
+        uses: actions/upload-artifact@v4
+        with:
+          name: prospeo-one-candidate-result
+          path: results/prospeo-one-candidate.csv
+          retention-days: 1
+          if-no-files-found: error
