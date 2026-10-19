@@ -15,7 +15,8 @@ import os
 from pathlib import Path
 import re
 import sys
-from urllib.parse import urlencode, urlsplit, unquote
+from urllib.parse import urlencode, urlsplit
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 SKILLS = (
@@ -239,8 +240,13 @@ def github_email(client: Github, login: str) -> tuple[str, str]:
         full_name = str(repo.get("full_name") or "")
         if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", full_name):
             continue
-        commits = client.get_list("/repos/" + full_name + "/commits?" + urlencode(
-            {"author": login, "per_page": 15}))
+        try:
+            commits = client.get_list("/repos/" + full_name + "/commits?" + urlencode(
+                {"author": login, "per_page": 15}))
+        except HTTPError as error:
+            if error.code in (404, 409):  # no matching commits / empty repository
+                continue
+            raise
         for commit in commits:
             author = commit.get("author") or {}
             c = commit.get("commit") or {}
@@ -315,9 +321,13 @@ def main(argv: list[str] | None = None) -> int:
         if args.live_xray and not args.confirm_free_search:
             raise ValueError("Free search credit confirmation required")
         jd = args.jd_text if args.jd_text is not None else Path(args.jd_file).read_text(encoding="utf-8")
+        block = re.search(r"~~~github-pairs\s*\n(.*?)\n~~~", jd, re.I | re.S)
+        embedded_pairs = block.group(1) if block else ""
+        if block:
+            jd = jd[:block.start()] + jd[block.end():]
         spec = read_jd(jd)
         queries = boolean_queries(spec)
-        src = ""
+        src = embedded_pairs
         if args.pairs_file:
             src = Path(args.pairs_file).read_text(encoding="utf-8")
         if args.pairs_env:
@@ -349,7 +359,7 @@ def main(argv: list[str] | None = None) -> int:
         print("JD queries generated; candidates:", len(records), "GitHub-only public emails:",
               summary["github_emails_found"], "X-ray live:", args.live_xray)
         return 0
-    except (OSError, ValueError, KeyError, json.JSONDecodeError) as exc:
+    except (OSError, ValueError, KeyError, json.JSONDecodeError, HTTPError, URLError):
         # Fail closed without leaking PII, URLs or tokens in exceptions.
         print("JD/X-ray/GitHub enrichment stopped: invalid inputs, permission, or provider configuration.", file=sys.stderr)
         return 2
