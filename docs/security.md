@@ -22,7 +22,7 @@ Configure only providers you use. Keep development and production keys separate 
 
 ## GitHub Secrets
 
-The workflow runs offline checks only. It does not reference provider secrets, has read-only repository permissions and does not persist checkout credentials. Keep provider secrets out of the test job.
+Offline tests and the scheduled candidate queue do not reference provider secrets, have read-only permissions (the queue also reads Issues), and do not persist checkout credentials. Keep provider secrets out of the test job.
 
 For a separately approved future live workflow:
 
@@ -32,7 +32,7 @@ For a separately approved future live workflow:
 4. Store candidate input/results privately outside git and preserve one restricted credit ledger across every run. Ephemeral Actions files alone cannot maintain quotas.
 5. Review plan entitlements, caps, request limits, overages and pending-job handling before authorizing live work. Snov additionally requires a confirmed finite provider/account-enforced credit ceiling per request, supplied as `--request-credit-cap snov=N`; leave it disabled if no such ceiling is confirmed. Adding secrets or access-confirmation flags does not authorize paid spending.
 
-No live workflow or schedule is present. Scheduling requires the repository owner's explicit approval.
+A scheduled candidate queue **offline-only preflight** workflow is present and uses zero provider API credits. There is no unattended live enrichment workflow; implementing one requires explicit provider entitlements and a durable cross-run credit ledger.
 
 ## Candidate data and state
 
