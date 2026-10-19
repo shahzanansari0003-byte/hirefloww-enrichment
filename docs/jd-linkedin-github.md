@@ -2,6 +2,24 @@
 
 Workflow file: .github/workflows/jd-linkedin-github.yml
 
+## Automatic trigger through a GitHub Issue
+
+Without opening the Actions form, create an issue in this **private** repository
+with title beginning `[HIREFLOWW_JD]`. Put the JD directly in the issue body.
+The workflow automatically runs a ZERO Brave-credit preflight and generates
+Boolean/X-ray search links. It can also consume **optional explicitly paired**
+candidate profiles from the same issue body in a fenced github-pairs section:
+
+~~~github-pairs
+name,linkedin_url,github_url
+Example Person,https://www.linkedin.com/in/example-person,https://github.com/example-person
+~~~
+
+Pairs result in GitHub-only public profile/commit-email lookup; there is no
+Brave X-ray API spending in the issue-triggered automatic mode.
+To auto-discover indexed LinkedIn profiles, use the Actions manual mode with
+the Brave secret and explicit confirmed-free flags (see section below).
+
 ## 1. Start
 
 Go to GitHub Actions > JD -> LinkedIn Xray -> GitHub-only email > Run workflow.
