@@ -1,3 +1,12 @@
+## NEW: JD → LinkedIn Boolean / X-ray → GitHub-only email
+
+- [Run GitHub workflow](.github/workflows/jd-linkedin-github.yml): paste a JD and optionally supply LinkedIn ↔ GitHub profile pairs.
+- [Setup / safety instructions](docs/jd-linkedin-github.md): Boolean X-ray links are always generated; optional Brave Search API can discover publicly indexed LinkedIn profiles only after explicit free-credit confirmation.
+- GitHub public profile/commit data is the ONLY source used to identify candidate emails; no other email enrichment vendor is called.
+- Create a **private GitHub Issue** with a title beginning `[HIREFLOWW_JD]` to automatically launch zero-Brave-credit JD processing; optionally include a `~~~github-pairs` CSV block.
+- [First GitHub Actions end-to-end test](https://github.com/shahzanansari0003-byte/hirefloww-enrichment/actions/runs/39273761384): two privately paired profiles processed, one GitHub-only publicly attributed email found; all work and results kept in private Actions artifacts.
+- Missing LinkedIn/GitHub identity cross-link means email is withheld. This is **not** LinkedIn scraping or guaranteed 50 fully qualified candidates.
+
 # Hirefloww Enrichment
 
 CSV-based candidate contact enrichment, email validation and optional risk checks through 11 official provider APIs. Python 3.10+ is required, with no third-party Python packages.
