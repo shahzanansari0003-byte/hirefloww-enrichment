@@ -1,6 +1,8 @@
 name: JD -> LinkedIn Xray -> GitHub-only email
 
 on:
+  issues:
+    types: [opened, edited, reopened]
   workflow_dispatch:
     inputs:
       job_description:
@@ -42,6 +44,7 @@ on:
 
 permissions:
   contents: read
+  issues: read
 
 concurrency:
   group: hirefloww-jd-xray-github
@@ -49,6 +52,7 @@ concurrency:
 
 jobs:
   source-github:
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.event.issue.title, '[HIREFLOWW_JD]')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -62,12 +66,12 @@ jobs:
           python-version: '3.11'
       - name: Parse JD, run allowed X-ray, and enrich from GitHub only
         env:
-          JD_TEXT: ${{ inputs.job_description }}
-          CANDIDATE_PAIRS_CSV: ${{ inputs.candidate_pairs_csv }}
-          USE_XRAY: ${{ inputs.live_xray }}
-          CONFIRM_FREE: ${{ inputs.confirm_free_search }}
-          MAX_QUERIES: ${{ inputs.max_queries }}
-          MAX_PROFILES: ${{ inputs.max_profiles }}
+          JD_TEXT: ${{ github.event_name == 'issues' && github.event.issue.body || inputs.job_description }}
+          CANDIDATE_PAIRS_CSV: ${{ inputs.candidate_pairs_csv || '' }}
+          USE_XRAY: ${{ inputs.live_xray || 'false' }}
+          CONFIRM_FREE: ${{ inputs.confirm_free_search || 'false' }}
+          MAX_QUERIES: ${{ github.event_name == 'issues' && '1' || inputs.max_queries }}
+          MAX_PROFILES: ${{ github.event_name == 'issues' && '10' || inputs.max_profiles }}
           BRAVE_SEARCH_API_KEY: ${{ secrets.BRAVE_SEARCH_API_KEY }}
           GITHUB_TOKEN: ${{ github.token }}
         run: |
