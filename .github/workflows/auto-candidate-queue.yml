@@ -1,0 +1,62 @@
+name: Automatic candidate queue preflight (no API charges)
+
+on:
+  schedule:
+    - cron: "23 3 * * *" # ~08:53 IST; GitHub scheduling is best-effort
+  workflow_dispatch:
+  issues:
+    types: [opened, edited, labeled, reopened]
+
+permissions:
+  contents: read
+  issues: read
+
+concurrency:
+  group: hirefloww-automatic-private-queue
+  cancel-in-progress: false
+
+jobs:
+  process:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.11"
+      - name: Read private candidate queue from labeled issues
+        id: queue
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: python scripts/issue_queue.py
+      - name: Automatically prepare zero-credit enrichment report
+        if: steps.queue.outputs.has_queue == 'true'
+        run: |
+          python enrich.py \
+            --input private/github-candidates.csv \
+            --output results/github-preflight.csv \
+            --providers getprospect,prospeo,hunter,tomba,dropcontact
+      - name: Upload private report (1-day retention)
+        if: steps.queue.outputs.has_queue == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: candidate-preflight-${{ github.run_id }}
+          path: results/github-preflight.csv
+          retention-days: 1
+          if-no-files-found: error
+      - name: Safe job summary
+        if: always()
+        env:
+          COUNT: ${{ steps.queue.outputs.candidate_count }}
+          HAS_QUEUE: ${{ steps.queue.outputs.has_queue }}
+        run: |
+          echo "## Hirefloww automatic candidate queue" >> "$GITHUB_STEP_SUMMARY"
+          echo "Candidate profiles processed: ${COUNT:-0}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Queue present: ${HAS_QUEUE:-false}" >> "$GITHUB_STEP_SUMMARY"
+          echo "DRY RUN ONLY — no external enrichment requests, no provider credits." >> "$GITHUB_STEP_SUMMARY"
+          echo "To enable live enrichment later, verify account-side free limits and configure a durable shared credit ledger." >> "$GITHUB_STEP_SUMMARY"
