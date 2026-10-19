@@ -23,7 +23,7 @@ python scripts/test_offline.py
 
 The sample contains synthetic identities at reserved example domains and a duplicate. Output must use a new path; existing files are never overwritten. The offline runner removes provider credentials, blocks DNS/socket connections, runs all unit tests, compiles root modules/tests/scripts and exercises the sample dry run.
 
-[GitHub Actions](.github/workflows/tests.yml) runs offline checks on Python 3.10–3.13 for pushes, pull requests and manual test runs. It uses read-only repository permissions and no provider secrets. No live or scheduled enrichment workflow is enabled.
+[GitHub Actions](.github/workflows/tests.yml) runs offline checks on Python 3.10–3.13 for pushes, pull requests and manual test runs. It uses read-only repository permissions and no provider secrets. Live unattended enrichment is not enabled. A separate [automatic candidate queue](docs/auto-candidate-queue.md) runs on issue changes and a daily schedule, but only in **zero-credit offline preflight** mode.
 
 ## Live configuration
 
@@ -51,4 +51,4 @@ Input accepts names with company details, LinkedIn URLs, existing emails and pho
 
 Keep real candidate CSVs under `private/`, `contacts/` or `data/`, results under `results/`, and the ledger under `.private/`. These locations are ignored by git. Review staged changes before committing; ignore rules do not protect already tracked files. Use appropriate permission, purpose and retention controls for professional contact data.
 
-No provider keys, real candidate records, enrichment requests or scheduled jobs are needed for repository setup. Live API behavior and account-specific eligibility remain configuration steps before any approved live run.
+No provider keys or live enrichment requests are needed to operate the scheduled offline candidate queue. Real candidate records belong only in the restricted private GitHub issue queue, not in source files or commits. Live API behavior and account-specific eligibility remain configuration steps before any approved live run.
