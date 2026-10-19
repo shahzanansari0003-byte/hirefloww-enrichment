@@ -1,0 +1,127 @@
+name: Guarded candidate email waterfall
+
+on:
+  workflow_dispatch:
+    inputs:
+      linkedin_url:
+        description: "Candidate's public LinkedIn URL"
+        required: true
+        type: string
+      full_name:
+        description: "Full name (optional; helps providers needing name)"
+        required: false
+        type: string
+      company_domain:
+        description: "Current company domain, e.g. example.com (optional)"
+        required: false
+        type: string
+      known_email:
+        description: "Already-public professional contact email (optional; skips all discovery)"
+        required: false
+        type: string
+      credit_cycle:
+        description: "Confirmed provider billing cycle YYYY-MM (not an arbitrary reset)"
+        required: true
+        default: "2026-10"
+        type: string
+      confirm_free_api_access:
+        description: "I confirmed API eligibility, at least 1 FREE credit in EACH selected provider, and disabled paid overages"
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: guarded-email-waterfall
+  cancel-in-progress: false
+
+jobs:
+  waterfall:
+    if: ${{ inputs.confirm_free_api_access == true }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.11"
+      - name: Prepare private candidate CSV
+        env:
+          LINKEDIN_URL: ${{ inputs.linkedin_url }}
+          FULL_NAME: ${{ inputs.full_name }}
+          COMPANY_DOMAIN: ${{ inputs.company_domain }}
+          KNOWN_EMAIL: ${{ inputs.known_email }}
+          CREDIT_CYCLE: ${{ inputs.credit_cycle }}
+        run: |
+          umask 077
+          mkdir -p private results .private
+          python - <<'PY'
+          import csv, os, re
+          from urllib.parse import urlsplit
+          url = os.environ["LINKEDIN_URL"].strip()
+          parsed = urlsplit(url)
+          slug = parsed.path.strip("/")
+          if parsed.scheme != "https" or parsed.netloc.lower() not in ("linkedin.com", "www.linkedin.com"):
+              raise SystemExit("A valid HTTPS LinkedIn profile is required")
+          if not slug.startswith("in/") or not slug[3:] or "/" in slug[3:]:
+              raise SystemExit("A linkedin.com/in/... profile URL is required")
+          if not re.fullmatch(r"20\d{2}-(0[1-9]|1[0-2])", os.environ["CREDIT_CYCLE"]):
+              raise SystemExit("Enter confirmed billing cycle YYYY-MM")
+          domain = os.environ["COMPANY_DOMAIN"].strip()
+          if domain and not re.fullmatch(r"(?i)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}", domain):
+              raise SystemExit("Enter a valid company domain")
+          known_email = os.environ["KNOWN_EMAIL"].strip()
+          if known_email and not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", known_email):
+              raise SystemExit("Enter a valid existing email")
+          record = {
+              "linkedin_url": "https://www.linkedin.com/" + slug,
+              "full_name": os.environ["FULL_NAME"].strip(),
+              "company_domain": domain,
+              "email": known_email
+          }
+          with open("private/candidate.csv", "w", newline="", encoding="utf-8") as f:
+              writer = csv.DictWriter(f, fieldnames=record.keys())
+              writer.writeheader()
+              writer.writerow(record)
+          PY
+      - name: Automatically try eligible discovery providers until email found
+        env:
+          PROSPEO_API_KEY: ${{ secrets.PROSPEO_API_KEY }}
+          GETPROSPECT_API_KEY: ${{ secrets.GETPROSPECT_API_KEY }}
+          HUNTER_API_KEY: ${{ secrets.HUNTER_API_KEY }}
+          TOMBA_API_KEY: ${{ secrets.TOMBA_API_KEY }}
+          TOMBA_SECRET_KEY: ${{ secrets.TOMBA_SECRET_KEY }}
+          DROPCONTACT_API_KEY: ${{ secrets.DROPCONTACT_API_KEY }}
+          CREDIT_CYCLE: ${{ inputs.credit_cycle }}
+        run: |
+          umask 077
+          # The persistent ledger needs external durable storage for repeated runs.
+          # GitHub runner storage is ephemeral, so this is ONE authorized one-off run.
+          # Confirm account-side free-only hard caps before using; do not schedule.
+          python enrich.py \
+            --input private/candidate.csv \
+            --output results/candidate-waterfall.csv \
+            --providers getprospect,prospeo,hunter,tomba,dropcontact \
+            --live \
+            --max-calls 5 \
+            --max-http-requests 5 \
+            --max-credit-units 5 \
+            --credit-cycle "$CREDIT_CYCLE" \
+            --email-credits getprospect=1 \
+            --email-credits prospeo=1 \
+            --email-credits hunter=1 \
+            --email-credits tomba=1 \
+            --email-credits dropcontact=1
+      - name: Upload private result
+        uses: actions/upload-artifact@v4
+        with:
+          name: candidate-waterfall-result
+          path: results/candidate-waterfall.csv
+          retention-days: 1
+          if-no-files-found: error
