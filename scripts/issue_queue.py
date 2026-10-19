@@ -62,7 +62,7 @@ def fetch_queue_issues(repo: str, token: str) -> list[dict[str, str]]:
     if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo) or not token:
         raise ValueError("GitHub access unavailable")
     request = Request(
-        f"https://api.github.com/repos/{repo}/issues?state=open&labels={LABEL}&per_page=100",
+        f"https://api.github.com/repos/{repo}/issues?state=open&per_page=100",
         headers={"Accept": "application/vnd.github+json",
                  "Authorization": "Bearer " + token,
                  "X-GitHub-Api-Version": "2022-11-28"})
@@ -70,7 +70,10 @@ def fetch_queue_issues(repo: str, token: str) -> list[dict[str, str]]:
         data = json.loads(response.read(2_000_000))
     if not isinstance(data, list):
         raise ValueError("Unexpected GitHub response")
-    issues = [item for item in data if isinstance(item, dict) and "pull_request" not in item]
+    issues = [item for item in data if isinstance(item, dict) and "pull_request" not in item
+              and (str(item.get("title", "")).startswith("[HIREFLOWW_QUEUE]")
+                   or any(label.get("name") == LABEL
+                          for label in item.get("labels", []) if isinstance(label, dict)))]
     if len(issues) >= 100:
         raise ValueError("Too many open queue issues")
     rows = []
