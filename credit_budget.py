@@ -13,14 +13,21 @@ import sqlite3
 import stat
 from pathlib import Path
 
+from provider_registry import REGISTRY
 
-PROVIDERS = frozenset({"prospeo", "getprospect", "hunter"})
+
+_LEGACY_PROVIDERS = frozenset({"prospeo", "getprospect", "hunter"})
+PROVIDERS = frozenset(REGISTRY)
 BUCKETS = frozenset({"email", "phone"})
 MAX_CREDITS = 2**63 - 1
 _CYCLE = re.compile(r"[0-9]{4}-(?:0[1-9]|1[0-2])\Z")
 _META_SQL = (
     "CREATE TABLE ledger_meta (id INTEGER PRIMARY KEY CHECK (id = 1), "
     "schema_version INTEGER NOT NULL CHECK (schema_version = 1))"
+)
+_META_V2_SQL = (
+    "CREATE TABLE ledger_meta (id INTEGER PRIMARY KEY CHECK (id = 1), "
+    "schema_version INTEGER NOT NULL CHECK (schema_version = 2))"
 )
 _CYCLES_SQL = "CREATE TABLE credit_cycles (cycle TEXT NOT NULL PRIMARY KEY)"
 _BUDGET_SQL = (
@@ -53,6 +60,9 @@ class CreditBudget:
     free-credit reset cycle, rather than rotating cycle values to reset usage.
     The SQLite database must remain available and must not be deleted between
     runs. Invalid, corrupt, or inaccessible ledgers raise CreditBudgetError.
+    Version-1 ledgers migrate atomically: existing usage and caps survive, while
+    newly supported providers receive configured caps only for the opened cycle.
+    Missing caps remain zero, and historical cycles receive zero new allowances.
     """
 
     def __init__(self, path: str | Path, cycle: str,
@@ -89,10 +99,15 @@ class CreditBudget:
             self._connection.execute("PRAGMA trusted_schema = OFF")
             self._connection.execute("BEGIN IMMEDIATE")
             if created:
-                self._connection.execute(_META_SQL)
-                self._connection.execute("INSERT INTO ledger_meta VALUES (1, 1)")
+                self._connection.execute(_META_V2_SQL)
+                self._connection.execute("INSERT INTO ledger_meta VALUES (1, 2)")
                 self._connection.execute(_CYCLES_SQL)
                 self._connection.execute(_BUDGET_SQL)
+            elif self._connection.execute(
+                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'ledger_meta'"
+            ).fetchone() == (_META_SQL,):
+                self._validate(version=1)
+                self._migrate_v1(limits)
             self._validate(allow_empty=created)
             self._connection.execute("INSERT OR IGNORE INTO credit_cycles VALUES (?)", (cycle,))
             for provider in sorted(PROVIDERS):
@@ -104,6 +119,7 @@ class CreditBudget:
                     "phone_limit = MIN(phone_limit, excluded.phone_limit)",
                     (cycle, provider, cap.get("email", 0), cap.get("phone", 0)),
                 )
+            self._validate()
             self._connection.execute("COMMIT")
         except (OSError, sqlite3.Error, CreditBudgetError):
             self.close()
@@ -127,20 +143,36 @@ class CreditBudget:
                 if not parent.is_dir():
                     raise CreditBudgetError("Credit ledger parent is not a directory")
 
-    def _validate(self, *, allow_empty: bool = False) -> None:
+    def _migrate_v1(self, limits: dict[str, dict[str, int]]) -> None:
+        """Upgrade inside the constructor's write transaction without resetting usage."""
         connection = self._require_connection()
+        cycles = [row[0] for row in connection.execute("SELECT cycle FROM credit_cycles")]
+        for cycle in cycles:
+            for provider in sorted(PROVIDERS - _LEGACY_PROVIDERS):
+                cap = limits.get(provider, {}) if cycle == self.cycle else {}
+                connection.execute(
+                    "INSERT INTO credit_budgets VALUES (?, ?, ?, ?, 0, 0)",
+                    (cycle, provider, cap.get("email", 0), cap.get("phone", 0)),
+                )
+        connection.execute("DROP TABLE ledger_meta")
+        connection.execute(_META_V2_SQL)
+        connection.execute("INSERT INTO ledger_meta VALUES (1, 2)")
+
+    def _validate(self, *, allow_empty: bool = False, version: int = 2) -> None:
+        connection = self._require_connection()
+        expected_providers = _LEGACY_PROVIDERS if version == 1 else PROVIDERS
         schema = connection.execute(
             "SELECT type, name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'"
         ).fetchall()
         if set(schema) != {
-            ("table", "ledger_meta", _META_SQL),
+            ("table", "ledger_meta", _META_SQL if version == 1 else _META_V2_SQL),
             ("table", "credit_cycles", _CYCLES_SQL),
             ("table", "credit_budgets", _BUDGET_SQL),
         }:
             raise CreditBudgetError("Invalid credit ledger schema")
         if connection.execute("PRAGMA quick_check").fetchall() != [("ok",)]:
             raise CreditBudgetError("Invalid credit ledger database")
-        if connection.execute("SELECT id, schema_version FROM ledger_meta").fetchall() != [(1, 1)]:
+        if connection.execute("SELECT id, schema_version FROM ledger_meta").fetchall() != [(1, version)]:
             raise CreditBudgetError("Invalid credit ledger version")
         stored_cycles = {row[0] for row in connection.execute("SELECT cycle FROM credit_cycles")}
         if any(not _valid_cycle(cycle) for cycle in stored_cycles) or (not stored_cycles and not allow_empty):
@@ -148,12 +180,12 @@ class CreditBudget:
         rows = connection.execute("SELECT * FROM credit_budgets").fetchall()
         cycles: dict[str, set[str]] = {}
         for cycle, provider, *counts in rows:
-            if (not _valid_cycle(cycle) or provider not in PROVIDERS
+            if (not _valid_cycle(cycle) or provider not in expected_providers
                     or not all(_valid_count(value) for value in counts)):
                 raise CreditBudgetError("Invalid credit ledger state")
             cycles.setdefault(cycle, set()).add(provider)
         # Every initialized cycle has all providers. Partial deletion must not reset caps.
-        if set(cycles) != stored_cycles or any(providers != PROVIDERS for providers in cycles.values()):
+        if set(cycles) != stored_cycles or any(providers != expected_providers for providers in cycles.values()):
             raise CreditBudgetError("Incomplete credit ledger state")
 
     def _require_connection(self) -> sqlite3.Connection:

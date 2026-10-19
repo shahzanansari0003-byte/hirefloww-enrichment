@@ -4,6 +4,7 @@
 
 # Private candidate inputs, outputs and the persistent credit ledger.
 private/
+contacts/
 .private/
 data/
 inputs/

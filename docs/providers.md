@@ -1,36 +1,25 @@
-# Provider integrations and result interpretation
+# Provider behavior and result interpretation
 
-The adapters use official APIs and no third-party Python packages. Tests supply synthetic mocked responses; project setup does not test with real credentials or candidate records. Check current official API documentation and your account's entitlement before any approved live run.
+All adapters use official APIs. Tests use synthetic mocked responses, not live account calls. See [PROVIDERS.md](../PROVIDERS.md) for all 11 providers, source links and access restrictions. API availability and free plan eligibility remain account-dependent.
 
-| Provider | Endpoint | Authentication | Capabilities |
-| --- | --- | --- | --- |
-| Prospeo | `POST https://api.prospeo.io/enrich-person` | `X-KEY` header | Email lookup and opt-in mobile lookup |
-| GetProspect | `POST https://api.getprospect.com/v2/people/enrich` | `x-api-key` header | Email lookup and opt-in mobile lookup |
-| Hunter | `GET https://api.hunter.io/v2/email-finder` | `api_key` query parameter | Email lookup by first name, last name and company domain |
+## Discovery and validation
 
-Manual balance metadata endpoints are `GET https://api.prospeo.io/account-information` and `GET https://api.getprospect.com/v2/credits`. They are never called by the offline workflow.
+Prospeo and GetProspect support email discovery and separately requested phones. Hunter, Tomba and Apollo supply email discovery only. Apollo requests business contact data without personal-email or phone reveal. Dropcontact and Snov return asynchronous tasks when results are not ready; only explicit `resume_pending.py --live` retrieval fetches an existing job.
 
-## Contact and verification status
+Output includes input identifiers and contact fields, contact source/status, separate `verification_source`/`verification_status`, separate `risk_source`/`risk_status`, `pending_task`, `enrichment_status` and sanitized errors.
 
-Each output row includes the original identifier fields, `email`, `phone`, `email_status`, `phone_status`, `email_source`, `phone_source`, `enrichment_status` and `errors`.
+Prospeo accepts only revealed verified values, GetProspect distinguishes valid emails from found phones, and Hunter preserves valid/accept-all/unknown/invalid distinctions from its response. Other provider evidence is also retained without inventing verification. A `provider_found` result does not establish deliverability or ownership. Masked contacts and invalid formats are excluded.
 
-Prospeo is requested with verified-email filtering; masked or unrevealed values are rejected. GetProspect distinguishes a valid email from a found phone. Hunter's finder response can provide a verification status, including unknown, accept-all or invalid outcomes, but a finder result alone is not a separate verification request. The application records provider evidence without promising deliverability or phone ownership. `provider_found` is not equivalent to verified; a found phone must not be represented as independently verified.
+Supplied emails/phones are preserved and marked `input_unverified`. Validation does not replace a candidate's email. Abstract, ZeroBounce.net and Emailable map their validation evidence to the separate verification fields. Unknown, catch-all, risky and invalid outcomes remain distinct from verified/deliverable results.
 
-Existing emails and phones are preserved and marked `input_unverified` rather than newly provider-verified. This project does not independently perform SMTP deliverability checks or place verification calls. Provider failures are summarized without logging raw response bodies or credentials.
+zerobounce.ai is a separate keyless risk service, not ZeroBounce.net. It never checks whether a mailbox exists, and its result is written only to risk fields. It is excluded from default validators and must be explicitly selected. Sending an email to it still discloses that email to an external service and needs the same live opt-in and privacy review.
 
-## Deduplication and fallback
+## Deduplication, limits and export
 
-Duplicate rows are skipped within one run using normalized LinkedIn URLs or email addresses when available. Name and company information is a fallback only when neither strong identifier is available, to avoid merging different people who share a name at the same company. Output retains a row marked `duplicate_skipped` so users can reconcile the input. No cross-run candidate cache or external CRM deduplication is claimed.
+Discovery stops after one usable email unless an explicitly requested phone is still missing. Existing contact fields are not overwritten. Within a run, normalized LinkedIn URLs and email addresses are strong deduplication signals. Name/company is a fallback only when no strong identifier exists, avoiding merges solely because people share a name. There is no cross-run candidate cache or external CRM deduplication.
 
-Providers are attempted in the order selected by `--providers`. Available fields, eligible identifiers, configured keys, per-run limits and persistent per-provider limits determine whether another lookup is allowed. Successful enrichment fills missing contact fields and records the source; it does not overwrite supplied contacts. A result without a contact is distinct from a skipped or blocked request.
+All HTTP work, including OAuth and explicit job retrieval, is subject to per-run limits and persistent provider reservations. Snov has no guessed one-credit request cost: it is blocked unless a finite provider/account-enforced worst-case ceiling is confirmed and supplied through `--request-credit-cap snov=N` for both submission and retrieval. Retrieval reserves that ceiling again conservatively. Provider failures produce sanitized errors; authenticated URLs, raw provider bodies and exception details are not copied into CSV output. No request automatically retries. See [configuration](configuration.md) for costs, migration and ledger failures.
 
-Formula-looking cells from input or provider responses are prefixed with an apostrophe when written to CSV, including phone numbers beginning with `+`; in-memory contact values remain unchanged. This reduces spreadsheet formula injection risk. Import the CSV as text when possible, and account for the protective prefix when another system reads exported values.
+Formula-looking values receive a protective apostrophe on CSV export, including phone numbers beginning with `+`; in-memory values remain unchanged. Import the CSV as text where possible and account for that prefix in downstream systems. Pending task identifiers are private local data and must not be committed or published.
 
-## Official documentation
-
-- [Prospeo person enrichment](https://prospeo.io/api-docs/enrich-person)
-- [GetProspect people enrichment](https://getprospect.com/api-docs/people-enrich)
-- [GetProspect credits](https://getprospect.com/api-docs/credits)
-- [Hunter API](https://hunter.io/api-documentation/v2)
-
-These links identify sources to review; they are not a claim that live API schemas or current pricing were validated during offline setup. No Kaspr, SignalHire or Snov.io integration is included.
+No scraping, mailbox SMTP probes, phone calls, messaging, webhook listener or CRM sync is implemented. Live behavior and account-specific access have not been tested as part of this update.

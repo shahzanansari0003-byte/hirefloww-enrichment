@@ -1,52 +1,54 @@
 # Hirefloww Enrichment
 
-CSV-based candidate email and phone enrichment through the official Prospeo, GetProspect and Hunter APIs. Python 3.10 or newer is required; there are no third-party Python dependencies.
+CSV-based candidate contact enrichment, email validation and optional risk checks through 11 official provider APIs. Python 3.10+ is required, with no third-party Python packages.
 
-Dry run is the default. Tests use synthetic contacts and mocked provider responses. Running the quickstart or test workflow does not contact enrichment providers or use credits.
+Dry run is the default. Tests use synthetic records, mocked responses and blocked network connections. Live account access and provider billing have not been tested.
 
-| Provider | Email | Phone | Status recorded when returned |
-| --- | --- | --- | --- |
-| Prospeo | Verified email only | Optional verified mobile | Provider verification status |
-| GetProspect | Valid email only | Optional found mobile | Provider valid/found status |
-| Hunter | Email finder | Unsupported | Provider finder/verification status |
+| Role | Providers |
+| --- | --- |
+| Email discovery, optional phone | GetProspect, Prospeo |
+| Email discovery | Hunter, Tomba, Dropcontact, Apollo, Snov.io |
+| Email validation | Abstract, ZeroBounce.net, Emailable |
+| Optional risk checks; never mailbox verification | zerobounce.ai, a separate service from ZeroBounce.net |
 
-Provider status is evidence reported by the provider at lookup time; it is not a guarantee of current deliverability or phone ownership. Supplied contact fields are preserved rather than silently reverified. See [provider and data behavior](docs/providers.md).
+Only GetProspect, Prospeo and Hunter are in the default discovery order. Added discovery providers require explicit selection. Validation is separately opt-in, and zerobounce.ai must be selected explicitly. [PROVIDERS.md](PROVIDERS.md) distinguishes recurring free offers, one-time trials, restricted access and unconfirmed account eligibility with official sources. Free website access does not establish free API entitlement.
 
 ## Offline quickstart
 
 ```bash
+python enrich.py --list-providers
 python enrich.py --input sample/leads.csv --output results/dryrun.csv
 python scripts/test_offline.py
 ```
 
-The sample contains clearly synthetic identities at reserved example domains, including a duplicate. Output files must use a new path; existing output files are not overwritten. The offline runner blocks outbound DNS and socket connections, runs all unit tests, compiles the Python files, and exercises the sample dry run.
+The sample contains synthetic identities at reserved example domains and a duplicate. Output must use a new path; existing files are never overwritten. The offline runner removes provider credentials, blocks DNS/socket connections, runs all unit tests, compiles root modules/tests/scripts and exercises the sample dry run.
 
-The [GitHub Actions workflow](.github/workflows/tests.yml) runs the same checks on Python 3.10, 3.11, 3.12 and 3.13 for pushes, pull requests and manual test runs. It has read-only repository permissions and does not receive provider secrets. There is no scheduled enrichment workflow.
+[GitHub Actions](.github/workflows/tests.yml) runs offline checks on Python 3.10–3.13 for pushes, pull requests and manual test runs. It uses read-only repository permissions and no provider secrets. No live or scheduled enrichment workflow is enabled.
 
-## Enabling live enrichment later
+## Live configuration
 
-API access requires your own eligible provider accounts. A free account does not necessarily include free API access or free phone lookups. Confirm the account's current API entitlement, billing cycle, remaining free credits and credit prices before enabling live mode. Local limits cannot establish whether a request is free or prevent a provider changing its charges.
+Live requests require `--live`, `--credit-cycle YYYY-MM` and explicit per-provider allocations. Every allocation defaults to zero. Set only the required keys through the process environment or secret manager; `.env` files are not loaded automatically. [Security](docs/security.md) documents all variable names and GitHub Secrets.
 
-Live mode requires `--live`, an explicit `--credit-cycle YYYY-MM`, and a credit allocation for the operations you intend to use. All provider allocations default to zero. Email-only lookup needs an email allocation. Phone lookup also needs `--phone`, a provider phone allocation and the per-run `--max-phone-credits` bound.
-
-For example, **only after confirming that one Hunter email lookup fits your remaining free allowance**, an email-only run would use:
+After confirming the account has enough free API allowance, a limited Hunter lookup can be configured as:
 
 ```bash
 python enrich.py --input private/candidates.csv --output results/email-run.csv \
-  --providers hunter --live --max-calls 1 \
+  --providers hunter --live --max-calls 1 --max-http-requests 1 \
   --credit-cycle YYYY-MM --email-credits hunter=1
 ```
 
-Replace `YYYY-MM` with your provider account's applicable cycle. Supply `HUNTER_API_KEY` through the process environment; do not put a key in the command, CSV, source code or git. `.env` files are not loaded automatically. [Configuration](docs/configuration.md) explains each guard and the phone settings. [Security](docs/security.md) documents local secrets and GitHub Secrets.
+Replace `YYYY-MM` with the applicable provider cycle. Do not execute a live example simply to test configuration. Local caps cannot determine your account plan, free entitlement or actual bill.
 
-The persistent ledger defaults to `.private/credits.sqlite3`. It reserves worst-case local credits before each request, including attempts that fail or return no match. All processes using the same provider accounts must share the same ledger. Keep the ledger between runs and do not delete it to recover a budget. Provider activity outside this tool must be deducted from the allowances yourself.
+[Configuration](docs/configuration.md) covers phone lookup, validation, restricted provider access and asynchronous jobs. All processes using the same accounts must share the persistent ledger, default `.private/credits.sqlite3`. Preserve it between runs, repeat the original allocations, and account for activity outside this tool. Reservations are retained after errors and no-match results.
 
-## Input and privacy
+Apollo and Snov additionally require `--approved-provider apollo` or `--approved-provider snov` after confirming the account's endpoint entitlement. This flag records operator confirmation of provider access; it does not authorize paid spending. Snov also requires `--request-credit-cap snov=N`, where `N` is a provider/account-enforced confirmed worst-case credit ceiling for one request, and sufficient ledger allocation. Its API can charge per returned email without a documented finite result ceiling; an arbitrary estimate is unsafe. Without a confirmed finite ceiling, leave Snov submission and retrieval disabled.
 
-CSV identifiers can include `first_name`, `last_name`, `full_name`, `company_name`, `company_domain`, `linkedin_url` and existing `email`/`phone`. At least a LinkedIn person URL, existing email, or a full name with company information is required; Hunter specifically needs first name, last name and company domain. Duplicate contacts are skipped within each input run. This is not a cross-run candidate database.
+## Asynchronous results and private data
 
-Store real inputs under `private/` or `data/` and outputs under `results/`. These locations and the quota ledger are ignored by git. Only synthetic sample data belongs in this repository. Review staged files before every commit: `.gitignore` does not remove information already tracked by git.
+Dropcontact and Snov submissions can return `pending_task`. Submission never automatically polls. Retrieve existing tasks through `resume_pending.py` only when explicitly ready; it defaults to offline dry run and needs the same ledger/cycle/allocations for live retrieval. Task identifiers and CSVs remain private. Retrieval is conservatively budgeted and can make authentication requests; it is not assumed free.
 
-Use professional contact data only with an appropriate purpose and permission, respect opt-outs and provider terms, and keep access to inputs and results restricted. This tool does not send messages or emails.
+Input accepts names with company details, LinkedIn URLs, existing emails and phones. Strong identifiers take precedence for deduplication; name/company matching is a fallback when those are absent. Duplicate detection is within a run, not a cross-run candidate database. Existing contacts are preserved and marked unverified. Provider-reported validation and risk fields remain separate; a found contact or risk result does not establish deliverability or mailbox existence. See [provider behavior](docs/providers.md).
 
-Live provider requests have not been executed as part of project setup. API behavior, account entitlement and pricing still need to be checked before any authorized live run. No enrichment schedule is enabled.
+Keep real candidate CSVs under `private/`, `contacts/` or `data/`, results under `results/`, and the ledger under `.private/`. These locations are ignored by git. Review staged changes before committing; ignore rules do not protect already tracked files. Use appropriate permission, purpose and retention controls for professional contact data.
+
+No provider keys, real candidate records, enrichment requests or scheduled jobs are needed for repository setup. Live API behavior and account-specific eligibility remain configuration steps before any approved live run.

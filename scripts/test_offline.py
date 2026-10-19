@@ -21,7 +21,8 @@ def main() -> int:
     root = Path(__file__).resolve().parent.parent
     os.chdir(root)
     sys.path.insert(0, str(root))
-    for variable in ("PROSPEO_API_KEY", "GETPROSPECT_API_KEY", "HUNTER_API_KEY"):
+    from provider_registry import REGISTRY
+    for variable in {key for spec in REGISTRY.values() for key in spec.required_keys}:
         os.environ.pop(variable, None)
     socket.create_connection = deny_network
     socket.getaddrinfo = deny_network
@@ -38,6 +39,10 @@ def main() -> int:
                *sorted((root / "scripts").rglob("*.py"))]
     for source in sources:
         py_compile.compile(str(source), doraise=True)
+
+    import enrich
+    if enrich.main(["--list-providers"]) != 0:
+        return 1
 
     with tempfile.TemporaryDirectory(prefix="hirefloww-offline-") as temporary:
         output = Path(temporary) / "dryrun.csv"
